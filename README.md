@@ -2,6 +2,8 @@
 
 `js8pitx` creates and transmits a JS8A (normal-speed) frame sequence with librpitx on a Raspberry Pi.
 
+It sends through pin GPIO4 and does not require a transmitter. See https://github.com/F5OEO/librpitx for details.
+
 ## JS8Call compatibility
 
 The implementation ports the JS8Call v2.2 framing and channel encoder logic needed for JS8A frame sequences:
