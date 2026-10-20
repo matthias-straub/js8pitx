@@ -17,4 +17,4 @@ js8pitx: js8tx.cpp js8_js8call_encoder.h js8_varicode.h js8_huffman.h js8_frames
 	$(CCP) $(CFLAGS) -std=c++17 -o js8pitx js8tx.cpp librpitx/src/librpitx.a $(LDFLAGS)
 
 clean:
-	rm -f js8tx
+	rm -f js8pitx
