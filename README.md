@@ -1,4 +1,4 @@
-# js8pitx JS8-NORMAL-mode transmitter for librpitx
+# js8pitx JS8 NORMAL-mode transmitter for librpitx
 
 `js8pitx` creates and transmits a JS8A (normal-speed) frame sequence with librpitx on a Raspberry Pi.
 
