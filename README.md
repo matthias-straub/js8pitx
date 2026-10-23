@@ -3,10 +3,15 @@
 `js8pitx` creates and transmits JS8Call-compatible JS8 frame sequences with
 [`librpitx`](https://github.com/F5OEO/librpitx) on a Raspberry Pi.
 
+This allows a Raspberry Pi to be used as a low-power HF transmitter, with an output of roughly 10 mW.
+Combined with a separate receiver, it can be used for JS8Call QSOs with other amateur radio operators and,
+with favorable propagation and a good antenna, even for DX contacts.
+
+Always use an appropriate low- or band-pass filter between the Raspberry Pi and the antenna when transmitting;
+observe the applicable amateur-radio regulations and band plan.
+
 The signal is generated directly on GPIO4. `--freq` is the actual RF carrier
 frequency in Hz, not a transceiver dial frequency plus an audio offset.
-Appropriate RF filtering is required before feeding the signal to an antenna;
-observe the applicable amateur-radio regulations and band plan.
 
 ## JS8 speed modes
 
