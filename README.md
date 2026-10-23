@@ -10,7 +10,7 @@ observe the applicable amateur-radio regulations and band plan.
 
 ## JS8 speed modes
 
-NORMAL remains the default. The other standard, enabled JS8Call speed modes are
+NORMAL speed mode is the default. The other standard, enabled JS8Call speed modes are
 selected explicitly:
 
 | Flag | JS8 submode | Symbol rate / tone spacing | UTC period | Nominal first tone | Costas |
@@ -22,9 +22,6 @@ selected explicitly:
 
 Only one speed flag may be specified. JS8I/ULTRA is intentionally not exposed,
 because it is currently disabled in upstream JS8Call.
-
-The existing encoder already contains both ORIGINAL and MODIFIED Costas arrays,
-so no change to `js8_js8call_encoder.h` is required.
 
 ## Timing and slot synchronization
 
