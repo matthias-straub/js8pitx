@@ -1,140 +1,182 @@
-# js8pitx JS8 transmitter for librpitx
+# js8pitx - JS8 transmitter for librpitx
 
-`js8pitx` creates and transmits JS8Call-compatible JS8 frame sequences with librpitx on a Raspberry Pi.
+`js8pitx` creates and transmits JS8Call-compatible JS8 frame sequences with
+[`librpitx`](https://github.com/F5OEO/librpitx) on a Raspberry Pi.
 
-It sends through pin GPIO4 and does not require a transmitter. See https://github.com/F5OEO/librpitx for details.
+The signal is generated directly on GPIO4. `--freq` is the actual RF carrier
+frequency in Hz, not a transceiver dial frequency plus an audio offset.
+Appropriate RF filtering is required before feeding the signal to an antenna;
+observe the applicable amateur-radio regulations and band plan.
+
+## JS8 speed modes
+
+NORMAL remains the default. The other standard, enabled JS8Call speed modes are
+selected explicitly:
+
+| Flag | JS8 submode | Symbol rate / tone spacing | UTC period | Nominal first tone | Costas |
+| --- | --- | ---: | ---: | ---: | --- |
+| *(none)* / `--normal` | JS8A NORMAL | 6.25 baud / 6.25 Hz | 15 s | +500 ms | ORIGINAL |
+| `--fast` | JS8B FAST | 10 baud / 10 Hz | 10 s | +200 ms | MODIFIED |
+| `--turbo` | JS8C TURBO | 20 baud / 20 Hz | 6 s | +100 ms | MODIFIED |
+| `--slow` | JS8E SLOW | 3.125 baud / 3.125 Hz | 30 s | +500 ms | MODIFIED |
+
+Only one speed flag may be specified. JS8I/ULTRA is intentionally not exposed,
+because it is currently disabled in upstream JS8Call.
+
+The existing encoder already contains both ORIGINAL and MODIFIED Costas arrays,
+so no change to `js8_js8call_encoder.h` is required.
+
+## Timing and slot synchronization
+
+Slot synchronization is enabled by default for every speed mode. The program
+initializes `librpitx` first, chooses the next UTC period boundary for the
+selected mode, waits until the proper transmit point, and then sends exactly one
+79-symbol frame.
+
+For example:
+
+```text
+NORMAL / JS8A
+slot boundary     00.000
+first tone        00.500
+next frame        15.500
+
+FAST / JS8B
+slot boundary     00.000
+first tone        00.200
+next frame        10.200
+
+TURBO / JS8C
+slot boundary     00.000
+first tone        00.100
+next frame         6.100
+
+SLOW / JS8E
+slot boundary     00.000
+first tone        00.500
+next frame        30.500
+```
+
+Multi-frame messages and repetitions are **not** transmitted continuously when
+synchronization is enabled. Each 79-symbol frame gets the next period of the
+selected submode. If execution is too late for the intended slot, the program
+skips whole periods instead of transmitting a late frame.
+
+`fskburst` fills its 64-word PCM FIFO before enabling GPIO4. The transmitter
+therefore enters `SetSymbols()` roughly one PCM sample before the desired RF
+first-tone edge. The compensation is derived from the selected symbol rate and
+upsampling factor. `--timing-adjust-ms` is retained for calibration of a
+particular Raspberry Pi with an SDR.
+
+```sh
+# Start the RF edge 20 ms earlier than the nominal mode timing
+sudo ./js8pitx --freq 7078000 --cq "CQ" --call DL1ABC --timing-adjust-ms -20
+
+# Start it 20 ms later
+sudo ./js8pitx --freq 7078000 --cq "CQ" --call DL1ABC --timing-adjust-ms 20
+```
+
+A system clock synchronized by NTP or GPS is recommended.
+
+`--no-sync` disables this behavior and sends frames immediately/back-to-back.
+It is intended for diagnostics rather than normal JS8Call interoperability.
 
 ## JS8Call compatibility
 
-The implementation ports the JS8Call v2.2 framing and channel encoder logic needed for JS8 frame sequences:
+The implementation provides the framing and channel-encoding paths required for
+JS8Call-compatible transmission:
 
 - JS8Call's 64-character payload alphabet and 72-bit payload packing
-- CRC-12 using the same Boost `augmented_crc<12, 0xC06>` recurrence, followed by JS8Call's XOR 42
+- CRC-12 and JS8Call's XOR 42
 - JS8Call's 87-bit parity matrix
 - ORIGINAL and MODIFIED Costas sequences and the 79-symbol arrangement
-- Normal-mode free-text Huffman packing from JS8Call's legacy `Varicode::packDataMessage` path
-- Structured heartbeat/CQ frames using JS8Call's `[type|call|grid|subtype]` layout
-- Structured directed frames using JS8Call's `[type|from|to|command|portable flags|number]` layout
-- JS8Call `FIRST`/middle/`LAST` transmission flags for generated frame sequences
-
-The transmitter supports the four standard JS8Call speed modes:
-
-| Flag | JS8 submode | Speed | Symbol rate | Tone spacing | Costas |
-| --- | --- | --- | ---: | ---: | --- |
-| *(none)* / `--normal` | JS8A | NORMAL | 6.25 baud | 6.25 Hz | ORIGINAL |
-| `--slow` | JS8E | SLOW | 3.125 baud | 3.125 Hz | MODIFIED |
-| `--fast` | JS8B | FAST | 10 baud | 10 Hz | MODIFIED |
-| `--turbo` | JS8C | TURBO | 20 baud | 20 Hz | MODIFIED |
-
-NORMAL is the default when no speed flag is given. Only one speed flag may be selected.
-
-The transmitter uses `fskburst` and its frequency-step/ramp mechanism. NORMAL, FAST, and TURBO use 32 samples per symbol. SLOW uses 64 samples per symbol so that its PCM DMA clock is 200 Hz rather than 100 Hz, reusing the same known-good clock rate as NORMAL. The resulting PCM DMA sample clocks are 200 Hz (SLOW), 200 Hz (NORMAL), 320 Hz (FAST), and 640 Hz (TURBO). This also preserves the existing Pi 4 workaround that avoids the invalid 50 Hz PCM divider produced by 8x NORMAL oversampling.
+- legacy Huffman free-text packing
+- CQ/heartbeat structured frames
+- directed QSO/control frames
+- directed keyboard-to-keyboard free text
+- JS8Call `FIRST` / middle / `LAST` flags across multi-frame messages
 
 ## Supported payloads
 
-Structured and raw payload modes send one 79-symbol frame. `--text` may produce multiple consecutive frames for long messages. Those frames use the same JS8Call transmission flags as the upstream client: `FIRST` on the first frame, no boundary flag on intermediate frames, and `LAST` on the final frame. `--repeat` repeats the complete encoded message sequence.
-
-### Free text
-
-`--text` produces legacy JS8Call Huffman data frames. Input is converted to uppercase. Long text is split at whole-character boundaries into as many 72-bit payloads as necessary, using JS8Call's legacy Huffman prefix, capacity, and padding convention. Text must use JS8Call's legacy Huffman character table.
-
-Stock JS8Call also has an optional dictionary-based dense-compression encoder and chooses it when it can carry more text than Huffman. That large compression dictionary is not included in this lightweight transmitter; the emitted Huffman frames remain standard, decodable JS8Call frames, but may require more frames than the desktop client for some text.
+### Undirected free text
 
 ```sh
 # NORMAL is the default
-sudo ./js8pitx --freq 7078000 --text "CQ CQ" --repeat 1
+sudo ./js8pitx --freq 7078000 --text "CQ CQ"
 
-# Explicit speed selections
-sudo ./js8pitx --freq 7078000 --slow --text "SLOW TEST"
 sudo ./js8pitx --freq 7078000 --fast --text "FAST TEST"
 sudo ./js8pitx --freq 7078000 --turbo --text "TURBO TEST"
-
-# Longer text: automatically sent as a FIRST/middle/LAST frame sequence
-sudo ./js8pitx --freq 7078000 --text "THIS IS A LONGER JS8CALL MESSAGE THAT SPANS MULTIPLE FRAMES"
+sudo ./js8pitx --freq 7078000 --slow --text "SLOW TEST"
 ```
+
+Long text is split into multiple payload frames. With synchronization enabled,
+each resulting frame occupies the next slot of the selected mode.
 
 ### CQ and heartbeat
 
-`--cq` and `--heartbeat` produce standard JS8Call heartbeat-format frames. Both require the transmitting station's callsign; `--grid` is optional. When omitted, the frame uses JS8Call's empty-grid sentinel (`nmaxgrid` / `32767`), which JS8Call decodes as no grid.
-
 ```sh
-# General CQ without a grid, NORMAL speed
-sudo ./js8pitx --freq 7078000 --cq "CQ" --call N0CALL
-
-# General CQ with a grid, FAST speed
-sudo ./js8pitx --freq 7078000 --fast --cq "CQ" --call N0CALL --grid EM73
-
-# Calling DX
-sudo ./js8pitx --freq 7078000 --cq "CQ DX" --call N0CALL --grid EM73
-
-# Heartbeat, SLOW speed
-sudo ./js8pitx --freq 7078000 --slow --heartbeat --call N0CALL --grid EM73
+sudo ./js8pitx --freq 7078000 --cq "CQ" --call DL1ABC
+sudo ./js8pitx --freq 7078000 --fast --cq "CQ DX" --call DL1ABC --grid JO62
+sudo ./js8pitx --freq 7078000 --slow --heartbeat --call DL1ABC --grid JO62
 ```
 
-Supported CQ types are:
+Supported CQ types include `CQ`, `CQ CQ`, `CQ CQ CQ`, `CQ DX`, `CQ QRP`,
+`CQ CONTEST`, `CQ FIELD`, and `CQ FD`.
 
-- `CQ`
-- `CQ CQ`
-- `CQ CQ CQ`
-- `CQ DX`
-- `CQ QRP`
-- `CQ CONTEST`
-- `CQ FIELD`
-- `CQ FD`
-
-### Directed QSO/control frames
-
-`--directed` produces a standard directed frame with a sender callsign, recipient callsign, and one JS8Call command.
+### Directed free text
 
 ```sh
-# Send a signal report in TURBO mode
+sudo ./js8pitx --freq 7078000 \
+  --directed --from DL1ABC --to K1ABC \
+  --message "HELLO JOHN HW CPY?"
+```
+
+The directed command-31 marker and following Huffman data frames retain the
+normal JS8Call FIRST/middle/LAST message-boundary behavior. The selected speed
+changes the PHY timing/Costas sequence, not the payload packing.
+
+### Directed QSO/control commands
+
+```sh
 sudo ./js8pitx --freq 7078000 --turbo \
-  --directed --from N0CALL --to K1ABC --cmd SNR --snr -12
+  --directed --from DL1ABC --to K1ABC --cmd SNR --snr -12
 
-# Send common QSO acknowledgements / closing traffic
-sudo ./js8pitx --freq 7078000 --directed --from N0CALL --to K1ABC --cmd RR
-sudo ./js8pitx --freq 7078000 --directed --from N0CALL --to K1ABC --cmd QSL
-sudo ./js8pitx --freq 7078000 --directed --from N0CALL --to K1ABC --cmd 73
-sudo ./js8pitx --freq 7078000 --directed --from N0CALL --to K1ABC --cmd SK
-
-# Ask for or announce the grid
-sudo ./js8pitx --freq 7078000 --directed --from N0CALL --to K1ABC --cmd "GRID?"
-sudo ./js8pitx --freq 7078000 --directed --from N0CALL --to K1ABC --cmd GRID
+sudo ./js8pitx --freq 7078000 --directed --from DL1ABC --to K1ABC --cmd RR
+sudo ./js8pitx --freq 7078000 --directed --from DL1ABC --to K1ABC --cmd QSL
+sudo ./js8pitx --freq 7078000 --directed --from DL1ABC --to K1ABC --cmd 73
+sudo ./js8pitx --freq 7078000 --directed --from DL1ABC --to K1ABC --cmd SK
 ```
 
-`--snr` is accepted only with `--cmd SNR` or `--cmd "HEARTBEAT SNR"` and must be in the range `-30` through `+31` dB.
+## Frequency selection
 
-The following standard directed commands are currently packable:
+`--freq` specifies the actual RF carrier frequency in Hz. With a conventional
+transceiver, JS8Call normally displays an audio offset above a USB dial
+frequency. Since `js8pitx` generates RF directly, use the desired actual RF
+frequency.
 
-```text
-SNR?         DIT DIT      NACK         HEARING?      GRID?
->            STATUS?      STATUS       HEARING       MSG
-MSG TO:      QUERY        QUERY MSGS   QUERY CALL    ACK
-GRID         INFO?        INFO         FB            HW CPY?
-SK           RR           QSL?         QSL           CMD
-SNR          NO           YES          73            HEARTBEAT SNR
-AGN?
+## Diagnostics
+
+`--dry-run` performs payload generation and prints the selected PHY parameters
+without initializing RF hardware:
+
+```sh
+./js8pitx --freq 7078000 --fast --text "TEST" --dry-run
 ```
 
-Standard directed frames accept a normal callsign of two to six characters, optionally suffixed with `/P`. Compound callsigns and multi-frame directed free-text messages are not yet supported by the CLI.
+`--raw12` accepts an already-packed 12-character payload. `--type` is valid only
+with `--raw12` and defaults to `3` (`FIRST|LAST`).
 
 ## Build
 
-```text
-Build on a Raspberry Pi or compatible Linux host:
-
+```sh
 sudo apt-get install git
 
 git clone https://github.com/matthias-straub/js8pitx.git
-
 cd js8pitx
 
 git clone https://github.com/F5OEO/librpitx.git
-
 cd librpitx/src
-
 make
-
 cd ../../
 
 make
@@ -143,26 +185,42 @@ make
 ## CLI options
 
 ```text
---freq <rf_hz>                 RF carrier frequency in Hz (required)
---text <TEXT>                  Free-text data message; splits into frames as needed
+--freq <rf_hz>                 Actual RF carrier frequency in Hz (required)
+
+Payload modes -- choose exactly one:
+--text <TEXT>                  Undirected free-text data; splits into frames as needed
 --cq <TYPE>                    CQ frame; requires --call; --grid is optional
 --heartbeat                    Heartbeat frame; requires --call; --grid is optional
---call CALL                    Originating station callsign for CQ/heartbeat
---grid GRID                    Optional four-character Maidenhead locator for CQ/heartbeat
---directed                     Directed command frame; requires --from, --to, --cmd
---from CALL                    Sending callsign for a directed frame
---to CALL                      Destination callsign for a directed frame
+--directed                     Directed mode; requires --from, --to and exactly one
+                               of --cmd or --message
+--raw12 <PAYLOAD12>            Pre-packed 12-character diagnostic payload
+
+CQ / heartbeat:
+--call CALL                    Originating callsign
+--grid GRID                    Optional four-character Maidenhead locator
+
+Directed traffic:
+--from CALL                    Sending callsign
+--to CALL                      Destination callsign
 --cmd COMMAND                  Directed JS8Call command
---snr DB                       SNR for directed SNR frames (-30 through +31)
---raw12 <PAYLOAD12>            Pre-packed diagnostic payload
+--message TEXT                 Directed keyboard-to-keyboard free text
+--snr DB                       SNR value for SNR / HEARTBEAT SNR
 
---normal                       JS8A NORMAL speed (default)
---slow                         JS8E SLOW speed
---fast                         JS8B FAST speed
---turbo                        JS8C TURBO speed
+Speed:
+--normal                       JS8A NORMAL (default)
+--fast                         JS8B FAST
+--turbo                        JS8C TURBO
+--slow                         JS8E SLOW
 
---type <0..7>                  Raw frame flags only; default 3 = FIRST|LAST
---repeat <n>                   Repeat frame n times; default 1
+Timing / transmission:
+--repeat <n>                   Repeat the complete message n times; default 1
+--no-sync                      Disable selected-mode UTC slot synchronization
+--timing-adjust-ms <ms>        RF first-tone timing adjustment, -5000..+5000; default 0
 --level <0..7>                 PAD drive level; default 7
 --ramp <0..0.5>                Symbol transition ramp fraction; default 0.1
+
+Diagnostics:
+--dry-run                      Encode/print without initializing RF hardware
+--type <0..7>                  Raw-frame flags; only valid with --raw12; default 3
+--help                         Show command-line help
 ```
