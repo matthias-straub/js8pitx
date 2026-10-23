@@ -8,7 +8,6 @@
 #include <string>
 #include <vector>
 #include <time.h>
-
 #include "librpitx/src/librpitx.h"
 #include "js8_js8call_encoder.h"
 #include "js8_varicode.h"
@@ -32,7 +31,6 @@ struct Js8Mode {
     size_t upsample;
     js8call::detail::CostasType costas;
 };
-
 const Js8Mode& js8_mode(Js8Speed speed) {
     // JS8Call submode parameters. Tone spacing equals symbol rate.
     // Period/start-delay values match current JS8Call JS8Submode/commons data.
@@ -48,7 +46,6 @@ const Js8Mode& js8_mode(Js8Speed speed) {
     static const Js8Mode slow = {
         "SLOW", "JS8E", 3.125f, 3.125f, 30000, 500, 64,
         js8call::detail::CostasType::MODIFIED};
-
     switch (speed) {
         case Js8Speed::Normal: return normal;
         case Js8Speed::Fast: return fast;
@@ -66,7 +63,6 @@ int64_t realtime_ns() {
     }
     return static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
 }
-
 int64_t next_slot_ms(int64_t period_ms) {
     const int64_t now_ms = realtime_ns() / 1000000LL;
     return ((now_ms / period_ms) + 1) * period_ms;
@@ -76,7 +72,6 @@ void wait_until_realtime_ns(int64_t target_ns) {
     timespec target{};
     target.tv_sec = static_cast<time_t>(target_ns / 1000000000LL);
     target.tv_nsec = static_cast<long>(target_ns % 1000000000LL);
-
     while (true) {
         const int rc = clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &target, nullptr);
         if (rc == 0) return;
@@ -84,7 +79,6 @@ void wait_until_realtime_ns(int64_t target_ns) {
         throw std::runtime_error(std::string("clock_nanosleep failed: ") + std::strerror(rc));
     }
 }
-
 int64_t librpitx_startup_lead_ns(const Js8Mode& phy) {
     // fskburst primes the 64-word PCM FIFO with 65 DMA writes before GPIO4 is
     // enabled. The 65th write normally waits for roughly one PCM sample.
@@ -93,13 +87,11 @@ int64_t librpitx_startup_lead_ns(const Js8Mode& phy) {
                                static_cast<double>(phy.upsample);
     return static_cast<int64_t>(1000000000.0 / pcm_rate_hz + 0.5);
 }
-
 uint8_t frame_flags(size_t index, size_t count, uint8_t single_frame_flags) {
     if (count == 1) return single_frame_flags;
     return static_cast<uint8_t>((index == 0 ? 1u : 0u) |
                                 (index + 1 == count ? 2u : 0u));
 }
-
 void usage(const char* prog) {
     fprintf(stderr,
             "Usage: %s --freq <rf_hz> <payload mode> [options]\n"
@@ -139,12 +131,10 @@ void usage(const char* prog) {
             "  %s --freq 7078000 --turbo --directed --from DL1ABC --to K1ABC --cmd SNR --snr -12\n",
             prog, prog, prog, prog, prog);
 }
-
 }  // namespace
 
 int main(int argc, char** argv) {
     uint64_t rf_freq = 0;
-
     std::string text;
     std::string directed_text;
     std::string raw12;
@@ -164,7 +154,6 @@ int main(int argc, char** argv) {
     bool dry_run = false;
     int snr = 0;
     int timing_adjust_ms = 0;
-
     Js8Speed speed = Js8Speed::Normal;
     int speed_flags = 0;
 
@@ -173,7 +162,6 @@ int main(int argc, char** argv) {
     int repeat = 1;
     int pad_level = 7;
     float ramp_frac = 0.10f;
-
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--freq") && i + 1 < argc) {
             rf_freq = static_cast<uint64_t>(strtoull(argv[++i], nullptr, 10));
@@ -241,7 +229,6 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
-
     const int payload_modes = static_cast<int>(text_provided) +
                               static_cast<int>(!raw12.empty()) +
                               static_cast<int>(!cq_type.empty()) +
@@ -310,9 +297,7 @@ int main(int argc, char** argv) {
                 "Error: --type only applies to --raw12; generated frames use JS8Call FIRST/LAST flags\n");
         return 1;
     }
-
     const Js8Mode& phy = js8_mode(speed);
-
     dbg_setlevel(1);
     std::vector<std::string> payloads;
     const char* payload_mode = "raw";
@@ -332,15 +317,14 @@ int main(int argc, char** argv) {
             payloads = js8call::pack_directed_text_frames(from, to, directed_text);
             payload_mode = "directed-text";
         } else {
-            payloads.push_back(
-                js8call::pack_directed_frame(from, to, command, snr, snr_provided));
+            payloads = js8call::pack_directed_command_frames(
+                from, to, command, snr, snr_provided);
             payload_mode = "directed";
         }
     } catch (const std::exception& e) {
         fprintf(stderr, "Encoding error: %s\n", e.what());
         return 1;
     }
-
     const size_t total_frames = payloads.size() * static_cast<size_t>(repeat);
     fprintf(stderr,
             "%s/%s %s @ %llu Hz, message_frames=%zu, repeat=%d, total_frames=%zu, "
@@ -362,7 +346,6 @@ int main(int argc, char** argv) {
                 static_cast<unsigned>(flags),
                 payloads[i].c_str());
     }
-
     if (dry_run) {
         fprintf(stderr,
                 "Dry run: RF hardware not initialized; slot period=%lld ms, first-tone offset=%lld ms.\n",
@@ -375,7 +358,6 @@ int main(int argc, char** argv) {
 
     padgpio pad;
     pad.setlevel(pad_level);
-
     // Initialize hardware before choosing the slot, so setup latency cannot make us miss it.
     fskburst tx(rf_freq,
                 phy.symbol_rate,
@@ -384,7 +366,6 @@ int main(int argc, char** argv) {
                 fifo,
                 phy.upsample,
                 ramp_frac);
-
     const int64_t startup_lead_ns = librpitx_startup_lead_ns(phy);
     int64_t next_slot = 0;
     if (sync_slots) {
@@ -408,7 +389,6 @@ int main(int argc, char** argv) {
         fprintf(stderr,
                 "Slot sync disabled: frames are transmitted immediately/back-to-back (diagnostic).\n");
     }
-
     size_t global_frame = 0;
     try {
         for (int r = 0; r < repeat; ++r) {
@@ -419,7 +399,6 @@ int main(int argc, char** argv) {
                 for (size_t n = 0; n < tones.size(); ++n) {
                     symbols[n] = static_cast<unsigned char>(tones[n] & 7u);
                 }
-
                 if (sync_slots) {
                     // Target the mode-specific JS8 first-tone point. SetSymbols() must be
                     // entered slightly before that point because fskburst primes the PCM FIFO
@@ -427,7 +406,6 @@ int main(int argc, char** argv) {
                     int64_t rf_target_ns =
                         (next_slot + phy.tone_start_delay_ms + timing_adjust_ms) * 1000000LL;
                     int64_t dma_start_ns = rf_target_ns - startup_lead_ns;
-
                     // If the previous frame or scheduler made us miss this slot, never transmit
                     // a late JS8 frame. Advance by whole mode periods until the DMA start is in
                     // the future. The small 2 ms guard avoids starting on an already-expiring edge.
@@ -439,7 +417,6 @@ int main(int argc, char** argv) {
                         dma_start_ns += phy.period_ms * 1000000LL;
                         ++skipped;
                     }
-
                     if (skipped) {
                         fprintf(stderr,
                                 "Warning: missed %d %s slot(s); realigned before frame %zu/%zu\n",
@@ -448,7 +425,6 @@ int main(int argc, char** argv) {
                                 global_frame + 1,
                                 total_frames);
                     }
-
                     fprintf(stderr,
                             "TX frame %zu/%zu: waiting for %s slot, RF first-tone target "
                             "epoch_ms=%.3f\n",
@@ -461,7 +437,6 @@ int main(int argc, char** argv) {
                     fprintf(stderr, "TX frame %zu/%zu: immediate\n",
                             global_frame + 1, total_frames);
                 }
-
                 // Send exactly one JS8 frame. SetSymbols() blocks until this burst is complete.
                 tx.SetSymbols(symbols.data(), static_cast<uint32_t>(symbols.size()));
 

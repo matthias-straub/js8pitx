@@ -134,7 +134,7 @@ sudo ./js8pitx --freq 7078000 \
 sudo ./js8pitx --freq 7078000 --turbo \
   --directed --from DL1ABC --to K1ABC --cmd SNR --snr -12
 
-# Acknowledge with the received SNR
+# Acknowledge and append the received SNR
 sudo ./js8pitx --freq 7078000 \
   --directed --from DL1ABC --to K1ABC --cmd ACK --snr -12
 
@@ -169,7 +169,10 @@ HEARTBEAT SNR AGN?
 ```
 
 `--snr` is accepted with `ACK`, `SNR`, and `HEARTBEAT SNR`. The value must be
-between `-30` and `+31` dB.
+between `-30` and `+31` dB. `SNR` and `HEARTBEAT SNR` store the report in the
+directed frame's numeric field. For `ACK`, the directed frame contains a plain
+`ACK` and the formatted report (for example `-12` or `+05`) follows as JS8Call
+message data.
 ## Frequency selection
 
 `--freq` specifies the actual RF carrier frequency in Hz. With a conventional

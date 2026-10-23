@@ -313,10 +313,9 @@ inline std::string pack_directed_frame(const std::string& from,
     uint8_t number = 0;
     const std::string normalized_command = detail::uppercase_trim(command);
     if (include_snr) {
-        if (normalized_command != "ACK" && normalized_command != "SNR" &&
-            normalized_command != "HEARTBEAT SNR") {
+        if (normalized_command != "SNR" && normalized_command != "HEARTBEAT SNR") {
             throw std::runtime_error(
-                "--snr is only valid with directed ACK, SNR, or HEARTBEAT SNR");
+                "Packed SNR is only valid with directed SNR or HEARTBEAT SNR");
         }
         number = detail::pack_snr(snr);
     }
@@ -330,6 +329,36 @@ inline std::string pack_directed_frame(const std::string& from,
     detail::append_bits(bits, to_portable ? 1 : 0, 1);
     detail::append_bits(bits, number, 6);
     return detail::pack_bits72(bits);
+}
+// Build a directed command as JS8Call's message builder does. SNR and
+// HEARTBEAT SNR carry their report in the directed frame's 6-bit number field.
+// ACK does not: an ACK report is trailing message text, so it is emitted as a
+// normal ACK directed frame followed by Huffman data frame(s).
+inline std::vector<std::string> pack_directed_command_frames(const std::string& from,
+                                                             const std::string& to,
+                                                             const std::string& command,
+                                                             int snr = 0,
+                                                             bool include_snr = false) {
+    const std::string normalized_command = detail::uppercase_trim(command);
+    if (!include_snr || normalized_command != "ACK") {
+        return {pack_directed_frame(from, to, command, snr, include_snr)};
+    }
+
+    // Validate with the same numeric range used by structured SNR reports.
+    (void)detail::pack_snr(snr);
+
+    const unsigned magnitude = static_cast<unsigned>(snr < 0 ? -snr : snr);
+    std::string report;
+    report.reserve(4);
+    report.push_back(snr < 0 ? '-' : '+');
+    report.push_back(static_cast<char>('0' + (magnitude / 10)));
+    report.push_back(static_cast<char>('0' + (magnitude % 10)));
+
+    std::vector<std::string> frames;
+    frames.push_back(pack_directed_frame(from, to, command));
+    auto data_frames = pack_normal_huffman_frames(" " + report);
+    frames.insert(frames.end(), data_frames.begin(), data_frames.end());
+    return frames;
 }
 // A normal keyboard-to-keyboard directed message is represented by one
 // FrameDirected with command 31 (space / freetext marker), followed by one or
