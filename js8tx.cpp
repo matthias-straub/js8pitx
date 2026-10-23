@@ -317,8 +317,8 @@ int main(int argc, char** argv) {
             payloads = js8call::pack_directed_text_frames(from, to, directed_text);
             payload_mode = "directed-text";
         } else {
-            payloads = js8call::pack_directed_command_frames(
-                from, to, command, snr, snr_provided);
+            payloads.push_back(js8call::pack_directed_frame(
+                from, to, command, snr, snr_provided));
             payload_mode = "directed";
         }
     } catch (const std::exception& e) {
