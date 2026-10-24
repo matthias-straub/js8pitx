@@ -176,7 +176,7 @@ inline uint16_t pack_grid(std::string grid) {
     }
 
     return static_cast<uint16_t>(
-        180 * (180 - 10 * (grid[0] - 'A') - (grid[2] - '0')) +
+        180 * (179 - 10 * (grid[0] - 'A') - (grid[2] - '0')) +
         10 * (grid[1] - 'A') + (grid[3] - '0'));
 }
 
