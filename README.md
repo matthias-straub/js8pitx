@@ -7,7 +7,7 @@ This allows a Raspberry Pi to be used as a low-power HF transmitter, with an out
 Combined with a separate receiver, it can be used for JS8Call QSOs with other amateur radio operators and,
 with favorable propagation and a good antenna, even for DX contacts.
 
-Always use an appropriate low- or band-pass filter between the Raspberry Pi and the antenna when transmitting;
+The Pi will create a square wave signal, so always use an appropriate low- or band-pass filter between the Raspberry Pi and the antenna when transmitting;
 observe the applicable amateur-radio regulations and band plan.
 
 The signal is generated directly on GPIO4. `--freq` is the actual RF carrier
