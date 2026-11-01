@@ -226,3 +226,12 @@ Diagnostics:
 --type <0..7>                  Raw-frame flags; only valid with --raw12; default 3
 --help                         Show command-line help
 ```
+## License
+
+This project is licensed under the GNU GPL v3.
+
+Parts of the JS8 encoder are derived from JS8Call:
+https://github.com/js8call/js8call
+
+The project uses librpitx:
+https://github.com/F5OEO/librpitx
