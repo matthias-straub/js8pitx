@@ -457,6 +457,7 @@ int main(int argc, char** argv) {
                             phy.designator,
                             static_cast<double>(rf_target_ns) / 1000000.0);
                     wait_until_realtime_ns(dma_start_ns);
+                    fprintf(stderr, "Transmitting ...\n");
                 } else {
                     fprintf(stderr, "TX frame %zu/%zu: immediate\n",
                             global_frame + 1, total_frames);
