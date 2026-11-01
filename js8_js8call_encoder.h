@@ -1,3 +1,7 @@
+// Portions derived from JS8Call:
+// https://github.com/js8call/js8call
+// Licensed under GNU GPL v3.
+
 #pragma once
 #include <array>
 #include <cstdint>
