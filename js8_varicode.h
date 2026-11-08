@@ -9,7 +9,6 @@
 #include <string_view>
 #include <utility>
 #include <vector>
-
 #include "js8_huffman.h"
 
 namespace js8call {
@@ -17,7 +16,10 @@ namespace detail {
 
 constexpr std::string_view kVaricodeAlphabet =
     "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-+/?.";
-
+constexpr uint32_t kNBaseCall = 37u * 36u * 10u * 27u * 27u * 27u;
+constexpr uint16_t kNBaseGrid = 180u * 180u;
+constexpr uint16_t kNUserGrid = kNBaseGrid + 10u;
+constexpr uint16_t kNMaxGrid = (1u << 15) - 1u;
 inline std::string uppercase_trim(std::string value) {
     const auto first = value.find_first_not_of(" \t\r\n");
     if (first == std::string::npos) return "";
@@ -28,7 +30,6 @@ inline std::string uppercase_trim(std::string value) {
     }
     return value;
 }
-
 inline unsigned alphabet_index(char c) {
     const auto index = kVaricodeAlphabet.find(c);
     if (index == std::string_view::npos) {
@@ -42,12 +43,10 @@ inline void append_bits(std::vector<uint8_t>& bits, uint64_t value, unsigned wid
         bits.push_back(static_cast<uint8_t>((value >> i) & 1u));
     }
 }
-
 inline std::string pack_bits72(const std::vector<uint8_t>& bits) {
     if (bits.size() != 72) {
         throw std::runtime_error("Internal JS8Call structured payload must contain 72 bits");
     }
-
     std::string payload;
     payload.reserve(12);
     for (size_t offset = 0; offset < bits.size(); offset += 6) {
@@ -59,7 +58,6 @@ inline std::string pack_bits72(const std::vector<uint8_t>& bits) {
     }
     return payload;
 }
-
 inline unsigned alphanumeric_index(char c) {
     constexpr std::string_view alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ /@";
     const auto index = alphabet.find(c);
@@ -68,7 +66,6 @@ inline unsigned alphanumeric_index(char c) {
     }
     return static_cast<unsigned>(index);
 }
-
 inline uint64_t pack_alphanumeric50(std::string value) {
     value = uppercase_trim(std::move(value));
     for (char c : value) {
@@ -77,14 +74,12 @@ inline uint64_t pack_alphanumeric50(std::string value) {
             throw std::runtime_error("Compound callsign contains an unsupported character");
         }
     }
-
     if (value.size() > 3 && value[3] != '/') value.insert(3, " ");
     if (value.size() > 7 && value[7] != '/') value.insert(7, " ");
     if (value.size() > 11) {
         throw std::runtime_error("Compound callsign is too long for a JS8Call frame");
     }
     value.append(11 - value.size(), ' ');
-
     uint64_t packed = 0;
     packed = packed * 39 + alphanumeric_index(value[0]);
     packed = packed * 38 + alphanumeric_index(value[1]);
@@ -99,10 +94,37 @@ inline uint64_t pack_alphanumeric50(std::string value) {
     packed = packed * 38 + alphanumeric_index(value[10]);
     return packed;
 }
-
+inline bool pack_reserved_callsign(std::string_view callsign, uint32_t* packed) {
+    static constexpr std::array<std::pair<std::string_view, uint8_t>, 54> calls{{
+        {"<....>", 1},     {"@ALLCALL", 2},   {"@JS8NET", 3},    {"@DX/NA", 4},
+        {"@DX/SA", 5},     {"@DX/EU", 6},     {"@DX/AS", 7},     {"@DX/AF", 8},
+        {"@DX/OC", 9},     {"@DX/AN", 10},    {"@REGION/1", 11}, {"@REGION/2", 12},
+        {"@REGION/3", 13}, {"@GROUP/0", 14},  {"@GROUP/1", 15},  {"@GROUP/2", 16},
+        {"@GROUP/3", 17},  {"@GROUP/4", 18},  {"@GROUP/5", 19},  {"@GROUP/6", 20},
+        {"@GROUP/7", 21},  {"@GROUP/8", 22},  {"@GROUP/9", 23},  {"@COMMAND", 24},
+        {"@CONTROL", 25},  {"@NET", 26},      {"@NTS", 27},      {"@RESERVE/0", 28},
+        {"@RESERVE/1", 29},{"@RESERVE/2", 30},{"@RESERVE/3", 31},{"@RESERVE/4", 32},
+        {"@APRSIS", 33},   {"@RAGCHEW", 34},  {"@JS8", 35},      {"@EMCOMM", 36},
+        {"@ARES", 37},     {"@MARS", 38},     {"@AMRRON", 39},   {"@RACES", 40},
+        {"@RAYNET", 41},   {"@RADAR", 42},    {"@SKYWARN", 43},  {"@CQ", 44},
+        {"@HB", 45},       {"@QSO", 46},      {"@QSOPARTY", 47}, {"@CONTEST", 48},
+        {"@FIELDDAY", 49}, {"@SOTA", 50},     {"@IOTA", 51},     {"@POTA", 52},
+        {"@QRP", 53},      {"@QRO", 54},
+    }};
+    for (const auto& [name, offset] : calls) {
+        if (callsign == name) {
+            if (packed) *packed = kNBaseCall + offset;
+            return true;
+        }
+    }
+    return false;
+}
 inline uint32_t pack_callsign(std::string callsign, bool* portable) {
     callsign = uppercase_trim(std::move(callsign));
     if (portable) *portable = false;
+
+    uint32_t reserved = 0;
+    if (pack_reserved_callsign(callsign, &reserved)) return reserved;
 
     if (callsign.size() > 2 && callsign.compare(callsign.size() - 2, 2, "/P") == 0) {
         callsign.resize(callsign.size() - 2);
@@ -112,7 +134,6 @@ inline uint32_t pack_callsign(std::string callsign, bool* portable) {
     if (callsign.size() < 2 || callsign.size() > 6) {
         throw std::runtime_error("Callsign must be 2 to 6 characters (optionally followed by /P)");
     }
-
     std::vector<std::string> forms{callsign};
     switch (callsign.size()) {
         case 2:
@@ -133,7 +154,6 @@ inline uint32_t pack_callsign(std::string callsign, bool* portable) {
         default:
             break;
     }
-
     std::string matched;
     for (const std::string& form : forms) {
         if (form.size() != 6) continue;
@@ -151,11 +171,9 @@ inline uint32_t pack_callsign(std::string callsign, bool* portable) {
                 std::string_view::npos;
         if (valid) matched = form;
     }
-
     if (matched.empty()) {
         throw std::runtime_error("Callsign is not encodable in a standard JS8Call directed frame");
     }
-
     uint32_t packed = alphanumeric_index(matched[0]);
     packed = 36 * packed + alphanumeric_index(matched[1]);
     packed = 10 * packed + alphanumeric_index(matched[2]);
@@ -164,7 +182,54 @@ inline uint32_t pack_callsign(std::string callsign, bool* portable) {
     packed = 27 * packed + alphanumeric_index(matched[5]) - 10;
     return packed;
 }
+inline bool is_standard_callsign(const std::string& callsign) {
+    try {
+        bool portable = false;
+        static_cast<void>(pack_callsign(callsign, &portable));
+        return true;
+    } catch (const std::runtime_error&) {
+        return false;
+    }
+}
+inline bool is_valid_compound_callsign(std::string callsign) {
+    callsign = uppercase_trim(std::move(callsign));
+    if (callsign.empty()) return false;
 
+    uint32_t reserved = 0;
+    if (pack_reserved_callsign(callsign, &reserved)) return false;
+
+    size_t non_slash = 0;
+    size_t slash_count = 0;
+    for (size_t i = 0; i < callsign.size(); ++i) {
+        const char c = callsign[i];
+        if (c == '/') {
+            ++slash_count;
+            continue;
+        }
+        ++non_slash;
+        if (c == '@') {
+            if (i != 0) return false;
+            continue;
+        }
+        if (!std::isdigit(static_cast<unsigned char>(c)) &&
+            !(c >= 'A' && c <= 'Z')) {
+            return false;
+        }
+    }
+    if (non_slash > 9 || callsign.front() == '/' || callsign.back() == '/' ||
+        callsign.find("//") != std::string::npos) {
+        return false;
+    }
+    if (callsign.front() == '@') return callsign.size() > 1;
+    if (slash_count != 0) return true;
+    if (callsign.size() <= 2) return false;
+    for (size_t i = 1; i < callsign.size(); ++i) {
+        const bool left_digit = std::isdigit(static_cast<unsigned char>(callsign[i - 1]));
+        const bool right_digit = std::isdigit(static_cast<unsigned char>(callsign[i]));
+        if (left_digit != right_digit) return true;
+    }
+    return false;
+}
 inline uint16_t pack_grid(std::string grid) {
     grid = uppercase_trim(std::move(grid));
     if (grid.size() != 4 || grid[0] < 'A' || grid[0] > 'R' ||
@@ -174,7 +239,6 @@ inline uint16_t pack_grid(std::string grid) {
         throw std::runtime_error(
             "Grid must be a valid 4-character Maidenhead locator (for example EM73)");
     }
-
     return static_cast<uint16_t>(
         180 * (179 - 10 * (grid[0] - 'A') - (grid[2] - '0')) +
         10 * (grid[1] - 'A') + (grid[3] - '0'));
@@ -183,13 +247,11 @@ inline uint16_t pack_grid(std::string grid) {
 inline bool whitespace_only(const std::string& value) {
     return !value.empty() && value.find_first_not_of(" \t\r\n") == std::string::npos;
 }
-
 inline uint8_t command_code(const std::string& command) {
     // JS8Call command 31 is the special directed-freetext marker. Upstream
     // represents it literally as a single space, so handle whitespace before
     // trimming the normal command strings.
     if (whitespace_only(command)) return 31;
-
     const std::string cmd = uppercase_trim(command);
     static const std::array<std::pair<std::string_view, uint8_t>, 27> commands{{
         {"SNR?", 0},       {"DIT DIT", 1},   {"NACK", 2},        {"HEARING?", 3},
@@ -200,7 +262,6 @@ inline uint8_t command_code(const std::string& command) {
         {"HW CPY?", 19},   {"SK", 20},       {"RR", 21},         {"QSL?", 22},
         {"QSL", 23},       {"CMD", 24},      {"SNR", 25},
     }};
-
     for (const auto& [name, code] : commands) {
         if (cmd == name) return code;
     }
@@ -211,16 +272,37 @@ inline uint8_t command_code(const std::string& command) {
     if (cmd == "AGN?") return 30;
     throw std::runtime_error("Unsupported JS8Call directed command");
 }
-
 inline uint8_t pack_snr(int snr) {
     if (snr < -30 || snr > 31) {
         throw std::runtime_error("SNR must be between -30 and +31 dB");
     }
     return static_cast<uint8_t>(snr + 31);
 }
+inline uint8_t pack_compound_command(uint8_t command, uint8_t number) {
+    if (command == 25 || command == 29) {
+        return static_cast<uint8_t>((((1u << 1) | (command == 29 ? 1u : 0u)) << 6) |
+                                    (number & 0x3fu));
+    }
+    return static_cast<uint8_t>(command & 0x7fu);
+}
+inline std::string pack_compound_frame(const std::string& callsign,
+                                       uint8_t type,
+                                       uint16_t number,
+                                       uint8_t bits3 = 0) {
+    if (type > 2) {
+        throw std::runtime_error("Invalid JS8Call compound frame type");
+    }
+    std::vector<uint8_t> bits;
+    bits.reserve(72);
+    append_bits(bits, type, 3);
+    append_bits(bits, pack_alphanumeric50(callsign), 50);
+    append_bits(bits, (number >> 5) & 0x7ffu, 11);
+    append_bits(bits, number & 0x1fu, 5);
+    append_bits(bits, bits3 & 0x07u, 3);
+    return pack_bits72(bits);
+}
 
 }  // namespace detail
-
 // Build legacy NORMAL-mode JS8Call Huffman data frames. A frame contains the
 // largest whole-character prefix that fits in 72 bits. Longer text is split
 // across successive frames.
@@ -232,7 +314,6 @@ inline std::vector<std::string> pack_normal_huffman_frames(const std::string& in
     const auto& table = js8::huffman_table();
     std::vector<std::string> frames;
     std::size_t offset = 0;
-
     while (offset < input.size()) {
         std::vector<uint8_t> bits;
         bits.reserve(72);
@@ -247,7 +328,6 @@ inline std::vector<std::string> pack_normal_huffman_frames(const std::string& in
             if (ch >= 'a' && ch <= 'z') {
                 ch = static_cast<unsigned char>(ch - 'a' + 'A');
             }
-
             const auto it = table.find(static_cast<char32_t>(ch));
             if (it == table.end()) {
                 throw std::runtime_error(
@@ -257,7 +337,6 @@ inline std::vector<std::string> pack_normal_huffman_frames(const std::string& in
             const auto code = it->second;
             // One bit is always kept available for the padding terminator.
             if (bits.size() + code.nbits >= 72) break;
-
             for (int bit = code.nbits - 1; bit >= 0; --bit) {
                 bits.push_back(static_cast<uint8_t>((code.bits >> bit) & 1u));
             }
@@ -272,7 +351,6 @@ inline std::vector<std::string> pack_normal_huffman_frames(const std::string& in
         while (bits.size() < 72) {
             bits.push_back(bits.size() == payload_end ? 0 : 1);
         }
-
         std::string frame;
         frame.reserve(12);
         for (std::size_t i = 0; i < 72; i += 6) {
@@ -287,7 +365,6 @@ inline std::vector<std::string> pack_normal_huffman_frames(const std::string& in
 
     return frames;
 }
-
 inline std::string pack_normal_huffman_frame(const std::string& input) {
     const auto frames = pack_normal_huffman_frames(input);
     if (frames.size() != 1) {
@@ -296,11 +373,10 @@ inline std::string pack_normal_huffman_frame(const std::string& input) {
     }
     return frames.front();
 }
-
 // JS8Call heartbeat/CQ frame: [type:3][call:50][grid:16][subtype:3].
 inline std::string pack_heartbeat_frame(const std::string& callsign,
-                                        const std::string& grid,
-                                        const std::string& cq_type = "") {
+                                         const std::string& grid,
+                                         const std::string& cq_type = "") {
     uint8_t subtype = 0;
     if (!cq_type.empty()) {
         const std::string cq = detail::uppercase_trim(cq_type);
@@ -314,7 +390,6 @@ inline std::string pack_heartbeat_frame(const std::string& callsign,
         else if (cq == "CQ") subtype = 7;
         else throw std::runtime_error("Unsupported CQ type");
     }
-
     uint16_t extra = grid.empty() ? 0x7fffu : detail::pack_grid(grid);
     if (!cq_type.empty()) extra |= 0x8000u;
 
@@ -326,7 +401,6 @@ inline std::string pack_heartbeat_frame(const std::string& callsign,
     detail::append_bits(bits, subtype, 3);
     return detail::pack_bits72(bits);
 }
-
 // JS8Call directed frame: [type:3][from:28][to:28][command:5]
 //                          [portable flags:2][number:6].
 inline std::string pack_directed_frame(const std::string& from,
@@ -339,7 +413,6 @@ inline std::string pack_directed_frame(const std::string& from,
     const uint32_t packed_from = detail::pack_callsign(from, &from_portable);
     const uint32_t packed_to = detail::pack_callsign(to, &to_portable);
     const uint8_t code = detail::command_code(command);
-
     uint8_t number = 0;
     const std::string normalized_command = detail::uppercase_trim(command);
     if (include_snr) {
@@ -348,7 +421,6 @@ inline std::string pack_directed_frame(const std::string& from,
         }
         number = detail::pack_snr(snr);
     }
-
     std::vector<uint8_t> bits;
     bits.reserve(72);
     detail::append_bits(bits, 3, 3);  // FrameDirected
@@ -360,24 +432,61 @@ inline std::string pack_directed_frame(const std::string& from,
     detail::append_bits(bits, number, 6);
     return detail::pack_bits72(bits);
 }
+inline std::vector<std::string> pack_directed_frames(const std::string& from,
+                                                     const std::string& to,
+                                                     const std::string& command,
+                                                     const std::string& grid = "",
+                                                     int snr = 0,
+                                                     bool include_snr = false) {
+    const bool from_standard = detail::is_standard_callsign(from);
+    const bool to_standard = detail::is_standard_callsign(to);
+    const bool from_compound = !from_standard && detail::is_valid_compound_callsign(from);
+    const bool to_compound = !to_standard && detail::is_valid_compound_callsign(to);
 
-// A normal keyboard-to-keyboard directed message is represented by one
-// FrameDirected with command 31 (space / freetext marker), followed by one or
-// more ordinary Huffman data frames. Transmission FIRST/LAST flags are applied
-// by the caller across the complete returned sequence.
+    if (!from_standard && !from_compound) {
+        throw std::runtime_error("Source callsign is not encodable in a JS8Call frame");
+    }
+    if (!to_standard && !to_compound) {
+        throw std::runtime_error("Destination callsign or group is not encodable in a JS8Call frame");
+    }
+    if (!from_compound && !to_compound) {
+        return {pack_directed_frame(from, to, command, snr, include_snr)};
+    }
+
+    const uint8_t code = detail::command_code(command);
+    uint8_t number = 0;
+    const std::string normalized_command = detail::uppercase_trim(command);
+    if (include_snr) {
+        if (normalized_command != "SNR" && normalized_command != "HEARTBEAT SNR") {
+            throw std::runtime_error("--snr is only valid with directed SNR or HEARTBEAT SNR");
+        }
+        number = detail::pack_snr(snr);
+    }
+
+    const uint16_t source_extra = grid.empty() ? detail::kNMaxGrid : detail::pack_grid(grid);
+    const uint16_t directed_extra = static_cast<uint16_t>(
+        detail::kNUserGrid + detail::pack_compound_command(code, number));
+
+    return {
+        detail::pack_compound_frame(from, 1, source_extra),
+        detail::pack_compound_frame(to, 2, directed_extra),
+    };
+}
+// A normal keyboard-to-keyboard directed message is represented by a directed
+// command-31 marker followed by one or more ordinary Huffman data frames.
+// Transmission FIRST/LAST flags are applied by the caller across the complete
+// returned sequence.
 inline std::vector<std::string> pack_directed_text_frames(const std::string& from,
                                                           const std::string& to,
-                                                          const std::string& text) {
+                                                          const std::string& text,
+                                                          const std::string& grid = "") {
     if (text.empty()) {
         throw std::runtime_error("Directed text must not be empty");
     }
-
-    std::vector<std::string> frames;
-    frames.push_back(pack_directed_frame(from, to, " "));
+    std::vector<std::string> frames = pack_directed_frames(from, to, " ", grid);
     auto data_frames = pack_normal_huffman_frames(text);
     frames.insert(frames.end(), data_frames.begin(), data_frames.end());
     return frames;
 }
 
 }  // namespace js8call
-
